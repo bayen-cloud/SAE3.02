@@ -1,65 +1,29 @@
 import socket
 import threading
 
-from database import Database
-from parser import parse_message
+# Fonction qui gère la connexion d'un routeur
+def handle_router(conn, addr):
+    print("Routeur connecté :", addr)
 
-MASTER_PORT = 5000
+    # Le routeur envoie ses infos : nom | clé publique | port
+    data = conn.recv(1024).decode()
+    print("Infos reçues :", data)
 
-class MasterServer:
+    conn.close()
 
-    def __init__(self):
-        self.db = Database()
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.bind(("0.0.0.0", MASTER_PORT))
-        self.sock.listen(10)
-        print("[MASTER] Écoute sur le port", MASTER_PORT)
+# Fonction principale du Master
+def start_master():
+    serveur = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    serveur.bind(("0.0.0.0", 5000))   # Le master écoute sur le port 5000
+    serveur.listen(5)
 
-    def start(self):
-        while True:
-            conn, addr = self.sock.accept()
-            print("[MASTER] Connexion de :", addr)
-            threading.Thread(target=self.handle_client, args=(conn, addr)).start()
+    print("Master prêt. En écoute sur le port 5000...")
 
-    def handle_client(self, conn, addr):
-        try:
-            raw = conn.recv(4096).decode()
-            msg = parse_message(raw)
+    while True:
+        conn, addr = serveur.accept()
 
-            if msg.get("TYPE") == "ROUTER":
-                self.register_router(msg, addr)
+        # On lance un thread pour gérer chaque routeur
+        thread = threading.Thread(target=handle_router, args=(conn, addr))
+        thread.start()
 
-            elif msg.get("TYPE") == "CLIENT":
-                if msg.get("ACTION") == "GET_ROUTER_LIST":
-                    self.send_router_list(conn)
-
-        except Exception as e:
-            print("[MASTER] Erreur:", e)
-
-        finally:
-            conn.close()
-
-    def register_router(self, msg, addr):
-        name = msg.get("NAME")
-        port = msg.get("PORT")
-        pubkey = msg.get("PUBLIC_KEY")
-        ip = addr[0]
-
-        self.db.add_router(name, ip, port, pubkey)
-        print(f"[MASTER] Routeur enregistré : {name}@{ip}:{port}")
-
-    def send_router_list(self, conn):
-        routers = self.db.get_routers()
-
-        response = ""
-        for name, ip, port, pub in routers:
-            response += f"ROUTER:{name}|{ip}|{port}|{pub}\n"
-
-        response += "END\n"
-        conn.send(response.encode())
-
-        print("[MASTER] Liste des routeurs envoyée.")
-
-
-if __name__ == "__main__":
-    MasterServer().start()
+start_master()
