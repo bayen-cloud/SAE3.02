@@ -16,8 +16,9 @@ def connect_bdd():
     try:
         conn = mariadb.connect(
             host="127.0.0.1",
+            port=3307,
             user="root",
-            password="TON_MOT_DE_PASSE",   # <-- Mets ton mot de passe ici
+            password="toto",   # <-- Mets ton mot de passe ici
             database="sae302"
         )
         return conn
