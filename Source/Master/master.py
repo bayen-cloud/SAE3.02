@@ -40,9 +40,10 @@ def save_routeur_bdd(router_id, ip, port_ecoute, cle_publique):
 
     try:
         cursor.execute(
-            "INSERT INTO routeurs (id, ip, port, cle_publique) VALUES (%s, %s, %s, %s)",
+            "REPLACE INTO routeurs (id, ip, port, cle_publique) VALUES (%s, %s, %s, %s)",
             (router_id, ip, port_ecoute, cle_publique)
         )
+
         conn.commit()
         print(f"[MASTER] Routeur {router_id} enregistré dans la base")
 
