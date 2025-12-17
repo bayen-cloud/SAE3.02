@@ -3,25 +3,27 @@ import sys
 import threading
 import random
 import math
-import time
 from sympy import isprime
 
 # =====================================================
-# PARAMÈTRES DU ROUTEUR (passés en argument)
+# PARAMÈTRES DU ROUTEUR (arguments ligne de commande)
 # =====================================================
-ROUTER_ID = sys.argv[1]          # ex: R1
-LISTEN_PORT = int(sys.argv[2])  # ex: 1800
+ROUTER_ID = sys.argv[1]          # Exemple : R1
+LISTEN_PORT = int(sys.argv[2])  # Exemple : 1800
 
 HOST = "0.0.0.0"
 MASTER_IP = "127.0.0.1"
 MASTER_PORT = 5000
 
+CLIENT_B_IP = "127.0.0.1"
+CLIENT_B_PORT = 7000
+
 # =====================================================
-# RSA "MAISON" (PÉDAGOGIQUE)
+# RSA PÉDAGOGIQUE (caractère par caractère)
 # =====================================================
 
 def generer_nombre_premier():
-    """Génère un nombre premier suffisamment grand"""
+    """Génère un nombre premier."""
     while True:
         n = random.randint(1000, 5000)
         if isprime(n):
@@ -29,7 +31,7 @@ def generer_nombre_premier():
 
 
 def generer_cle_rsa():
-    """Génère une paire de clés RSA (publique, privée)"""
+    """Génère une paire de clés RSA."""
     p = generer_nombre_premier()
     q = generer_nombre_premier()
 
@@ -44,15 +46,24 @@ def generer_cle_rsa():
     return (e, n), (d, n)
 
 
-def rsa_dechiffrer(chiffre, cle_privee):
-    """Déchiffre un entier RSA et retourne une chaîne"""
+def rsa_dechiffrer(message_chiffre, cle_privee):
+    """
+    Déchiffre un message RSA caractère par caractère.
+    Format attendu : "c1,c2,c3,..."
+    """
     d, n = cle_privee
-    c = int(chiffre)
-    m = pow(c, d, n)
-    return m.to_bytes((m.bit_length() + 7) // 8, "big").decode()
+    message = ""
+
+    blocs = message_chiffre.split(",")
+
+    for bloc in blocs:
+        m = pow(int(bloc), d, n)
+        message += chr(m)
+
+    return message
 
 
-# Génération des clés RSA AU DÉMARRAGE
+# Génération des clés au démarrage
 CLE_PUBLIQUE, CLE_PRIVEE = generer_cle_rsa()
 
 # =====================================================
@@ -60,7 +71,7 @@ CLE_PUBLIQUE, CLE_PRIVEE = generer_cle_rsa()
 # =====================================================
 
 def enregistrer_au_master():
-    """Envoie l'identité et la clé publique au Master"""
+    """Enregistre le routeur auprès du Master."""
     e, n = CLE_PUBLIQUE
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -68,72 +79,60 @@ def enregistrer_au_master():
         s.send(f"{ROUTER_ID}|{e},{n}|{LISTEN_PORT}".encode())
         print(f"[{ROUTER_ID}] {s.recv(1024).decode()}")
         s.close()
-    except Exception as err:
-        print(f"[{ROUTER_ID}] ❌ Erreur Master : {err}")
+    except Exception as e:
+        print(f"[{ROUTER_ID}] Erreur Master : {e}")
 
 # =====================================================
 # TRAITEMENT DES MESSAGES (ROUTAGE EN OIGNON)
 # =====================================================
 
 def handle_message(conn, addr):
-    """Traite un message entrant (une couche d'oignon)"""
-    data = conn.recv(8192).decode()
-    print(f"[{ROUTER_ID}] Reçu : {data}")
-
-    # Séparation de la couche RSA et du reste
+    """Traite une couche d'oignon."""
     try:
-        rsa_part, reste = data.split("|", 1)
-        clair = rsa_dechiffrer(rsa_part, CLE_PRIVEE)
-    except Exception as e:
-        print(f"[{ROUTER_ID}] ❌ Erreur déchiffrement : {e}")
-        conn.close()
-        return
+        data = conn.recv(8192).decode()
+        print(f"[{ROUTER_ID}] Reçu : {data}")
 
-    # Si c'est la dernière couche
-    if clair == "FINAL":
-        print(f"[{ROUTER_ID}] 🎉 MESSAGE FINAL : {reste}")
-        conn.close()
-        return
+        route, payload = data.split("||", 1)
 
-    # Sinon, on récupère le prochain saut
-    try:
-        next_ip, next_port = clair.split("|")
-        next_port = int(next_port)
-    except:
-        print(f"[{ROUTER_ID}] ❌ Format IP|PORT invalide : {clair}")
-        conn.close()
-        return
+        # Cas DERNIÈRE COUCHE
+        if route == "FINAL":
+            message = rsa_dechiffrer(payload, CLE_PRIVEE)
+            print(f"[{ROUTER_ID}] Dernière couche déchiffrée")
+            print(f"[{ROUTER_ID}] Envoi du message à Client B")
 
-    print(f"[{ROUTER_ID}] → Prochain saut {next_ip}:{next_port}")
-
-    # Envoi au routeur suivant (avec retry)
-    for tentative in range(3):
-        try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.connect((next_ip, next_port))
-            s.send(reste.encode())
+            s.connect((CLIENT_B_IP, CLIENT_B_PORT))
+            s.send(message.encode())
             s.close()
-            print(f"[{ROUTER_ID}] Message transmis")
-            break
-        except Exception as e:
-            print(f"[{ROUTER_ID}] Tentative {tentative+1} échouée")
-            time.sleep(0.5)
-    else:
-        print(f"[{ROUTER_ID}] ❌ Impossible de joindre {next_ip}:{next_port}")
+            return
 
-    conn.close()
+        # Cas ROUTAGE
+        next_ip, next_port = route.split("|")
+        next_port = int(next_port)
+
+        print(f"[{ROUTER_ID}] Prochain saut {next_ip}:{next_port}")
+
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.connect((next_ip, next_port))
+        s.send(payload.encode())
+        s.close()
+
+    except Exception as e:
+        print(f"[{ROUTER_ID}] Erreur traitement message : {e}")
+    finally:
+        conn.close()
 
 # =====================================================
 # SERVEUR DU ROUTEUR
 # =====================================================
 
 def start_router():
-    """Lance le serveur TCP du routeur"""
+    """Démarre le serveur TCP du routeur."""
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.bind((HOST, LISTEN_PORT))
     server.listen()
 
-    print(f"[{ROUTER_ID}] Routeur RSA actif sur {LISTEN_PORT}")
+    print(f"[{ROUTER_ID}] Routeur actif sur le port {LISTEN_PORT}")
 
     while True:
         conn, addr = server.accept()

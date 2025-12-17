@@ -1,193 +1,155 @@
 import socket
 import threading
-import mariadb   # module officiel MariaDB
+import mariadb
+import time
 
-# ------------------ CONFIG ------------------
 HOST = "0.0.0.0"
-PORT = 5000          # Port pour les ROUTEURS
-CLIENT_PORT = 6000   # Port pour les CLIENTS
+ROUTER_PORT = 5000
+CLIENT_PORT = 6000
 
-# Dictionnaire en mémoire
 routeurs = {}
-
+routeurs_lock = threading.Lock()
 server_running = True
 
-
-# ------------------------------------------------
-# Connexion à la base MariaDB
-# ------------------------------------------------
+# =====================================================
+# CONNEXION BASE DE DONNÉES
+# =====================================================
 def connect_bdd():
-    try:
-        conn = mariadb.connect(
-            host="127.0.0.1",
-            port=3307,              # ton port MariaDB
-            user="root",
-            password="toto",        # ⚠ mets TON mot de passe
-            database="sae302"
-        )
-        return conn
-    except mariadb.Error as e:
-        print(f"[MASTER] ERREUR MariaDB : {e}")
-        exit(1)
+    return mariadb.connect(
+        host="127.0.0.1",
+        port=3307,
+        user="root",
+        password="toto",
+        database="sae302"
+    )
 
+# =====================================================
+# LOG (injecté par la GUI)
+# =====================================================
+def log(message, callback=None):
+    timestamp = time.strftime("%H:%M:%S")
+    line = f"[{timestamp}] {message}"
+    if callback:
+        callback(line)
+    else:
+        print(line)
 
-# ------------------------------------------------
-# Sauvegarde d’un routeur dans la base
-# ------------------------------------------------
-def save_routeur_bdd(router_id, ip, port_ecoute, cle_publique):
-    conn = connect_bdd()
-    cursor = conn.cursor()
-
-    try:
-        cursor.execute(
-            "REPLACE INTO routeurs (id, ip, port, cle_publique) VALUES (%s, %s, %s, %s)",
-            (router_id, ip, port_ecoute, cle_publique)
-        )
-
-        conn.commit()
-        print(f"[MASTER] Routeur {router_id} enregistré dans la base")
-
-    except mariadb.Error as e:
-        print(f"[MASTER] ERREUR SQL : {e}")
-
-    cursor.close()
-    conn.close()
-
-
-# ------------------------------------------------
-# Gestion connexion ROUTEUR
-# ------------------------------------------------
-def handle_router(conn, addr):
-    print(f"[MASTER] Routeur connecté : {addr}")
-
+# =====================================================
+# ROUTEURS
+# =====================================================
+def handle_router(conn, addr, log_callback):
     data = conn.recv(4096).decode()
-    print(f"[MASTER] Reçu : {data}")
+    log(f"Routeur connecté depuis {addr}", log_callback)
 
     try:
-        router_id, cle_publique, port_ecoute = data.split("|")
-        port_ecoute = int(port_ecoute)
+        rid, key, port = data.split("|")
+        port = int(port)
     except:
-        print("[MASTER] ERREUR format routeur")
-        conn.close()
+        log("Format routeur invalide", log_callback)
         return
 
-    # Stockage mémoire
-    routeurs[router_id] = {
+    with routeurs_lock:
+        routeurs[rid] = {
         "ip": addr[0],
-        "port": port_ecoute,
-        "key": cle_publique
+        "port": port,
+        "key": key
     }
 
-    # Stockage base
-    save_routeur_bdd(router_id, addr[0], port_ecoute, cle_publique)
 
-    conn.send(f"OK routeur {router_id} enregistré".encode())
+    conn_db = connect_bdd()
+    cur = conn_db.cursor()
+    cur.execute(
+        "REPLACE INTO routeurs (id, ip, port, cle_publique) VALUES (?, ?, ?, ?)",
+        (rid, addr[0], port, key)
+    )
+    conn_db.commit()
+    conn_db.close()
+
+    log(f"Routeur {rid} enregistré", log_callback)
+    conn.send(b"OK")
     conn.close()
 
-
-# ------------------------------------------------
-# Serveur ROUTEURS
-# ------------------------------------------------
-def server_loop(server):
-    global server_running
+def router_server(log_callback):
+    try:
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind((HOST, ROUTER_PORT))
+        server.listen()
+        log("Serveur routeurs actif", log_callback)
+    except Exception as e:
+        log(f"Erreur bind routeurs : {e}", log_callback)
+        return
 
     while server_running:
-        try:
-            server.settimeout(1)
-            conn, addr = server.accept()
-            threading.Thread(
-                target=handle_router,
-                args=(conn, addr),
-                daemon=True
-            ).start()
-        except socket.timeout:
-            continue
-
-
-# ------------------------------------------------
-# Gestion connexion CLIENT
-# ------------------------------------------------
-def handle_client(conn, addr):
-    print(f"[MASTER] Client connecté : {addr}")
-
-    message = ""
-    for r_id, info in routeurs.items():
-        message += f"{r_id};{info['ip']};{info['port']};{info['key']}\n"
-
-    message += "END"
-
-    conn.send(message.encode())
-    conn.close()
-
-
-# ------------------------------------------------
-# Serveur CLIENTS
-# ------------------------------------------------
-def start_client_server():
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.bind((HOST, CLIENT_PORT))
-    server.listen()
-
-    print(f"[MASTER] Serveur client actif sur le port {CLIENT_PORT}")
-
-    while True:
         conn, addr = server.accept()
         threading.Thread(
-            target=handle_client,
-            args=(conn, addr),
+            target=handle_router,
+            args=(conn, addr, log_callback),
             daemon=True
         ).start()
 
 
-# ------------------------------------------------
-# Démarrage du MASTER
-# ------------------------------------------------
-def start_master():
-    global server_running
+# =====================================================
+# CLIENTS
+# =====================================================
+def handle_client(conn, addr, log_callback):
+    log(f"Client connecté depuis {addr}", log_callback)
+    for rid, r in routeurs.items():
+        line = f"{rid};{r['ip']};{r['port']};{r['key']}\n"
+        conn.send(line.encode())
+    conn.send(b"END")
+    conn.close()
 
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.bind((HOST, PORT))
-    server.listen()
+def client_server(log_callback):
+    try:
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind((HOST, CLIENT_PORT))
+        server.listen()
+        log("Serveur clients actif", log_callback)
+    except Exception as e:
+        log(f"Erreur bind clients : {e}", log_callback)
+        return
 
-    print(f"[MASTER] Démarré sur {HOST}:{PORT}")
-    print("Tape 'list' pour afficher les routeurs")
-    print("Tape 'stop' pour arrêter\n")
+    while server_running:
+        conn, addr = server.accept()
+        threading.Thread(
+            target=handle_client,
+            args=(conn, addr, log_callback),
+            daemon=True
+        ).start()
 
-    #  Lancement du serveur CLIENT
+
+# =====================================================
+# LANCEMENT GLOBAL
+# =====================================================
+def start_master_server(log_callback=None):
     threading.Thread(
-        target=start_client_server,
+        target=router_server,
+        args=(log_callback,),
         daemon=True
     ).start()
 
-    #  Lancement du serveur ROUTEUR
-    server_thread = threading.Thread(
-        target=server_loop,
-        args=(server,),
+    threading.Thread(
+        target=client_server,
+        args=(log_callback,),
         daemon=True
-    )
-    server_thread.start()
+    ).start()
 
-    # Console Master
-    while True:
-        cmd = input("> ").strip().lower()
+def get_routeurs_snapshot():
+    """
+    Retourne une copie de l'état des routeurs (thread-safe).
+    Utilisé par l'interface graphique.
+    """
+    with routeurs_lock:
+        return dict(routeurs)
+    
+# =====================================================
+# API POUR L'INTERFACE GRAPHIQUE
+# =====================================================
 
-        if cmd == "stop":
-            print("[MASTER] Arrêt du serveur...")
-            server_running = False
-            server.close()
-            break
-
-        elif cmd == "list":
-            print("\n=== ROUTEURS ===")
-            for r in routeurs:
-                print(f"- {r} → {routeurs[r]}")
-            print("================\n")
-
-    print("[MASTER] Serveur arrêté proprement.")
-
-
-# ------------------------------------------------
-# MAIN
-# ------------------------------------------------
-if __name__ == "__main__":
-    start_master()
+def start_master(log_callback=None):
+    """
+    Point d'entrée utilisé par l'interface graphique
+    """
+    start_master_server(log_callback)

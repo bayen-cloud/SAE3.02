@@ -1,72 +1,31 @@
 import socket
-import random
+import threading
 
-MASTER_IP = "127.0.0.1"
-MASTER_CLIENT_PORT = 6000
-CLIENT_ID = "C"
+# Client C écoute sur un port dédié
+HOST = "0.0.0.0"
+PORT = 7002  # Port du client C
 
-# -------- RSA CHIFFREMENT --------
-def rsa_chiffrer(message, cle_publique):
-    e, n = cle_publique
-    m = int.from_bytes(message.encode(), "big")
-    c = pow(m, e, n)
-    return str(c)
+def handle_conn(conn, addr):
+    """Affiche le message reçu puis ferme la connexion."""
+    try:
+        data = conn.recv(8192).decode()
+        print(f"[Client C] Message reçu de {addr} : {data}")
+    except Exception as e:
+        print(f"[Client C] Erreur réception : {e}")
+    finally:
+        conn.close()
 
-# -------- MASTER --------
-def demander_routeurs():
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.connect((MASTER_IP, MASTER_CLIENT_PORT))
-    data = s.recv(8192).decode()
-    s.close()
+def start_client_c():
+    """Démarre le serveur TCP du client C."""
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind((HOST, PORT))
+    server.listen()
 
-    routeurs = {}
-    for ligne in data.split("\n"):
-        if ligne == "END":
-            break
+    print(f"[Client C] En écoute sur {HOST}:{PORT}")
 
-        r_id, ip, port, cle = ligne.split(";")
-        e, n = cle.split(",")
-
-        routeurs[r_id] = {
-            "ip": ip,
-            "port": int(port),
-            "key": (int(e), int(n))
-        }
-
-    return routeurs
-
-# -------- OIGNON --------
-def construire_oignon(chemin, message_final):
-    payload = f"FINAL|{message_final}"
-
-    for _, info in reversed(chemin):
-        couche = f"{info['ip']}|{info['port']}"
-        rsa_couche = rsa_chiffrer(couche, info["key"])
-        payload = f"{rsa_couche}|{payload}"
-
-    return payload
-
-
-def choisir_chemin(routeurs):
-    ids = list(routeurs.keys())
-    chemin_ids = random.sample(ids, 3)
-    return [(rid, routeurs[rid]) for rid in chemin_ids]
-
+    while True:
+        conn, addr = server.accept()
+        threading.Thread(target=handle_conn, args=(conn, addr), daemon=True).start()
 
 if __name__ == "__main__":
-
-    print(f"\n=== CLIENT {CLIENT_ID} (RSA PARTIEL) ===")
-
-    routeurs = demander_routeurs()
-    chemin = choisir_chemin(routeurs)
-
-    print("Chemin choisi :", [r[0] for r in chemin])
-
-    oignon = construire_oignon(chemin, f"HELLO_FROM_{CLIENT_ID}")
-    print("\nOignon envoyé :", oignon)
-
-    premier = chemin[0][1]
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.connect((premier["ip"], premier["port"]))
-    s.send(oignon.encode())
-    s.close()
+    start_client_c()

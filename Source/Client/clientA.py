@@ -5,14 +5,27 @@ MASTER_IP = "127.0.0.1"
 MASTER_CLIENT_PORT = 6000
 CLIENT_ID = "A"
 
-# -------- RSA CHIFFREMENT --------
+# =====================================================
+# RSA CHIFFREMENT (caractère par caractère)
+# =====================================================
 def rsa_chiffrer(message, cle_publique):
+    """
+    Chiffre un message caractère par caractère avec RSA
+    Retourne une chaîne "c1,c2,c3,..."
+    """
     e, n = cle_publique
-    m = int.from_bytes(message.encode(), "big")
-    c = pow(m, e, n)
-    return str(c)
+    blocs = []
 
-# -------- MASTER --------
+    for caractere in message:
+        m = ord(caractere)
+        c = pow(m, e, n)
+        blocs.append(str(c))
+
+    return ",".join(blocs)
+
+# =====================================================
+# RÉCUPÉRATION DES ROUTEURS DEPUIS LE MASTER
+# =====================================================
 def demander_routeurs():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.connect((MASTER_IP, MASTER_CLIENT_PORT))
@@ -20,11 +33,20 @@ def demander_routeurs():
     s.close()
 
     routeurs = {}
-    for ligne in data.split("\n"):
-        if ligne == "END":
-            break
 
-        r_id, ip, port, cle = ligne.split(";")
+    for ligne in data.split("\n"):
+        ligne = ligne.strip()
+
+        # Ignorer lignes vides ou END
+        if not ligne or ligne == "END":
+            continue
+
+        try:
+            r_id, ip, port, cle = ligne.split(";")
+        except ValueError:
+            # Ligne invalide ignorée (sécurité)
+            continue
+
         e, n = cle.split(",")
 
         routeurs[r_id] = {
@@ -35,38 +57,58 @@ def demander_routeurs():
 
     return routeurs
 
-# -------- OIGNON --------
+
+# =====================================================
+# CONSTRUCTION DE L’OIGNON
+# =====================================================
 def construire_oignon(chemin, message_final):
-    payload = f"FINAL|{message_final}"
+    """
+    Construit le message en oignon
+    """
+    _, dernier = chemin[-1]
+
+    message_chiffre = rsa_chiffrer(message_final, dernier["key"])
+    payload = f"FINAL||{message_chiffre}"
 
     for _, info in reversed(chemin):
-        couche = f"{info['ip']}|{info['port']}"
-        rsa_couche = rsa_chiffrer(couche, info["key"])
-        payload = f"{rsa_couche}|{payload}"
+        route = f"{info['ip']}|{info['port']}"
+        payload = f"{route}||{payload}"
 
     return payload
 
-
 def choisir_chemin(routeurs):
     ids = list(routeurs.keys())
+
+    if len(ids) < 3:
+        raise Exception(
+            f"Erreur : {len(ids)} routeur(s) disponible(s). "
+            "Au moins 3 routeurs sont nécessaires."
+        )
+
     chemin_ids = random.sample(ids, 3)
     return [(rid, routeurs[rid]) for rid in chemin_ids]
 
-
-if __name__ == "__main__":
-
-    print(f"\n=== CLIENT {CLIENT_ID} (RSA PARTIEL) ===")
-
+# =====================================================
+# FONCTION UTILISABLE PAR L’INTERFACE GRAPHIQUE
+# =====================================================
+def envoyer_message(message):
+    """
+    Envoie un message à travers le réseau en oignon
+    """
     routeurs = demander_routeurs()
     chemin = choisir_chemin(routeurs)
 
-    print("Chemin choisi :", [r[0] for r in chemin])
-
-    oignon = construire_oignon(chemin, f"HELLO_FROM_{CLIENT_ID}")
-    print("\nOignon envoyé :", oignon)
+    oignon = construire_oignon(chemin, message)
 
     premier = chemin[0][1]
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.connect((premier["ip"], premier["port"]))
     s.send(oignon.encode())
     s.close()
+
+# =====================================================
+# MAIN (mode console, pour tests)
+# =====================================================
+if __name__ == "__main__":
+    print(f"\n=== CLIENT {CLIENT_ID} ===")
+    envoyer_message("Bonjour")
