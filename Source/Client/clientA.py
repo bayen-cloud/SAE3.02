@@ -29,33 +29,42 @@ def rsa_chiffrer(message, cle_publique):
 def demander_routeurs():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.connect((MASTER_IP, MASTER_CLIENT_PORT))
-    data = s.recv(8192).decode()
+
+    buffer = ""
+    while True:
+        data = s.recv(1024).decode()
+        if not data:
+            break
+
+        buffer += data
+        if "END" in buffer:
+            break
+
     s.close()
 
     routeurs = {}
 
-    for ligne in data.split("\n"):
+    for ligne in buffer.split("\n"):
         ligne = ligne.strip()
 
-        # Ignorer lignes vides ou END
         if not ligne or ligne == "END":
             continue
 
         try:
             r_id, ip, port, cle = ligne.split(";")
+            e, n = cle.split(",")
+
+            routeurs[r_id] = {
+                "ip": ip,
+                "port": int(port),
+                "key": (int(e), int(n))
+            }
         except ValueError:
-            # Ligne invalide ignorée (sécurité)
+            # Ligne incomplète ignorée
             continue
 
-        e, n = cle.split(",")
-
-        routeurs[r_id] = {
-            "ip": ip,
-            "port": int(port),
-            "key": (int(e), int(n))
-        }
-
     return routeurs
+
 
 
 # =====================================================
@@ -92,13 +101,14 @@ def choisir_chemin(routeurs):
 # FONCTION UTILISABLE PAR L’INTERFACE GRAPHIQUE
 # =====================================================
 def envoyer_message(message):
-    """
-    Envoie un message à travers le réseau en oignon
-    """
     routeurs = demander_routeurs()
     chemin = choisir_chemin(routeurs)
 
+    print("Chemin choisi :", [rid for rid, _ in chemin])
+
     oignon = construire_oignon(chemin, message)
+
+    print("Oignon envoyé :", oignon)
 
     premier = chemin[0][1]
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

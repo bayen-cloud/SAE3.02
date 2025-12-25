@@ -94,11 +94,19 @@ def router_server(log_callback):
 # =====================================================
 def handle_client(conn, addr, log_callback):
     log(f"Client connecté depuis {addr}", log_callback)
-    for rid, r in routeurs.items():
-        line = f"{rid};{r['ip']};{r['port']};{r['key']}\n"
-        conn.send(line.encode())
+
+    with routeurs_lock:
+        log(f"Envoi de {len(routeurs)} routeur(s) au client", log_callback)
+
+        for rid, r in routeurs.items():
+            line = f"{rid};{r['ip']};{r['port']};{r['key']}\n"
+            conn.send(line.encode())
+
     conn.send(b"END")
     conn.close()
+
+
+
 
 def client_server(log_callback):
     try:

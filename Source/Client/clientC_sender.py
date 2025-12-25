@@ -78,7 +78,7 @@ if __name__ == "__main__":
 
     print("Chemin choisi :", [r[0] for r in chemin])
 
-    message = "Bonjour depuis C"
+    message = "Bonjour depuis clientC"
     oignon = construire_oignon(chemin, message)
 
     print("Oignon construit et envoyé")

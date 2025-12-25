@@ -1,80 +1,134 @@
 import sys
+import socket
 import threading
+import time
+
 from PyQt5.QtWidgets import (
-    QApplication,
-    QWidget,
-    QLabel,
-    QPushButton,
-    QTextEdit,
-    QVBoxLayout,
-    QMessageBox
+    QApplication, QWidget, QVBoxLayout, QLabel,
+    QPushButton, QTextEdit, QLineEdit
 )
+from PyQt5.QtCore import Qt, pyqtSignal
 
-# IMPORT DE TON CODE EXISTANT
-# On suppose que clientA.py contient une fonction envoyer_message(message)
-from clientA import envoyer_message
+# ================= CONFIG =================
+CLIENT_ID = "A"
+LISTEN_PORT = 7001
 
+DEST_IP = "127.0.0.1"
+DEST_PORT = 7000  # Client B
 
-class ClientAGUI(QWidget):
-    """
-    Interface graphique du Client A
-    """
+# =====================================================
+# CLIENT GUI
+# =====================================================
+class ClientGUI(QWidget):
+    log_signal = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle("Client A - Envoi de message")
-        self.setGeometry(200, 200, 400, 300)
+        self.log_signal.connect(self.add_log)
 
-        # Widgets
-        self.label = QLabel("Message à envoyer :")
-        self.text_message = QTextEdit()
-        self.button_send = QPushButton("Envoyer")
+        self.setWindowTitle("SAE3.02 - Client A")
+        self.setGeometry(300, 300, 500, 400)
 
-        # Layout
         layout = QVBoxLayout()
-        layout.addWidget(self.label)
-        layout.addWidget(self.text_message)
-        layout.addWidget(self.button_send)
-
         self.setLayout(layout)
 
-        # Connexion bouton
-        self.button_send.clicked.connect(self.on_send_clicked)
+        # Titre
+        title = QLabel("Client A")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("font-size:18px; font-weight:bold;")
+        layout.addWidget(title)
 
-    def on_send_clicked(self):
-        """
-        Action lors du clic sur le bouton Envoyer
-        """
-        message = self.text_message.toPlainText().strip()
+        # Champ message
+        self.input_message = QLineEdit()
+        self.input_message.setPlaceholderText("Message à envoyer...")
+        layout.addWidget(self.input_message)
+
+        # Bouton envoyer
+        self.btn_send = QPushButton("Envoyer")
+        self.btn_send.clicked.connect(self.send_message)
+        layout.addWidget(self.btn_send)
+
+        # Logs
+        self.logs = QTextEdit()
+        self.logs.setReadOnly(True)
+        layout.addWidget(self.logs)
+
+        # Thème bleu nuit
+        self.setStyleSheet("""
+            QWidget { background-color:#0b1c2d; color:white; }
+            QPushButton { background:#1f4e79; padding:8px; font-weight:bold; }
+            QPushButton:hover { background:#2e6fa3; }
+            QTextEdit { background:#12263a; }
+            QLineEdit { background:#12263a; padding:6px; }
+        """)
+
+        # Démarrage du receiver
+        threading.Thread(
+            target=self.receiver_thread,
+            daemon=True
+        ).start()
+
+        self.add_log(f"Client A en écoute sur le port {LISTEN_PORT}")
+
+    # =================================================
+    # THREAD RECEIVER (non bloquant)
+    # =================================================
+    def receiver_thread(self):
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind(("0.0.0.0", LISTEN_PORT))
+        server.listen()
+
+        while True:
+            conn, addr = server.accept()
+            message = conn.recv(4096).decode()
+            conn.close()
+
+            self.log_signal.emit(
+                f"Message reçu de {addr[0]}:{addr[1]} → {message}"
+            )
+
+    # =================================================
+    # ENVOI MESSAGE (thread séparé)
+    # =================================================
+    def send_message(self):
+        message = self.input_message.text().strip()
 
         if not message:
-            QMessageBox.warning(self, "Erreur", "Le message est vide")
             return
 
-        # Envoi non bloquant
-        thread = threading.Thread(
-            target=self.send_message_thread,
+        threading.Thread(
+            target=self.send_thread,
             args=(message,),
             daemon=True
-        )
-        thread.start()
+        ).start()
 
-        QMessageBox.information(self, "Succès", "Message envoyé")
-        self.text_message.clear()
-
-    def send_message_thread(self, message):
-        """
-        Thread d'envoi du message
-        """
+    def send_thread(self, message):
         try:
-            envoyer_message(message)
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.connect((DEST_IP, DEST_PORT))
+            s.send(message.encode())
+            s.close()
+
+            self.log_signal.emit(
+                f"Message envoyé vers {DEST_IP}:{DEST_PORT}"
+            )
         except Exception as e:
-            print(f"[Client A GUI] Erreur envoi : {e}")
+            self.log_signal.emit(f"Erreur envoi : {e}")
+
+    # =================================================
+    # LOG
+    # =================================================
+    def add_log(self, text):
+        timestamp = time.strftime("%H:%M:%S")
+        self.logs.append(f"[{timestamp}] {text}")
 
 
+# =====================================================
+# MAIN
+# =====================================================
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    window = ClientAGUI()
-    window.show()
+    win = ClientGUI()
+    win.show()
     sys.exit(app.exec_())
