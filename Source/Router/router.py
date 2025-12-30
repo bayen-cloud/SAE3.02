@@ -87,30 +87,38 @@ def enregistrer_au_master():
 # =====================================================
 
 def handle_message(conn, addr):
-    """Traite une couche d'oignon."""
     try:
         data = conn.recv(8192).decode()
         print(f"[{ROUTER_ID}] Reçu : {data}")
 
         route, payload = data.split("||", 1)
 
-        # Cas DERNIÈRE COUCHE
+        # =========================
+        # CAS FINAL : ENVOI AU CLIENT
+        # =========================
         if route == "FINAL":
-            message = rsa_dechiffrer(payload, CLE_PRIVEE)
-            print(f"[{ROUTER_ID}] Dernière couche déchiffrée")
-            print(f"[{ROUTER_ID}] Envoi du message à Client B")
+            dest_port_str, message_chiffre = payload.split("||", 1)
+            dest_port = int(dest_port_str)
+
+            # Déchiffrement
+            message = rsa_dechiffrer(message_chiffre, CLE_PRIVEE)
+
+            print(f"[{ROUTER_ID}] Message final déchiffré : {message}")
+            print(f"[{ROUTER_ID}] Envoi vers client sur port {dest_port}")
 
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.connect((CLIENT_B_IP, CLIENT_B_PORT))
+            s.connect(("127.0.0.1", dest_port))
             s.send(message.encode())
             s.close()
             return
 
-        # Cas ROUTAGE
+        # =========================
+        # ROUTAGE NORMAL
+        # =========================
         next_ip, next_port = route.split("|")
         next_port = int(next_port)
 
-        print(f"[{ROUTER_ID}] Prochain saut {next_ip}:{next_port}")
+        print(f"[{ROUTER_ID}] → Prochain saut {next_ip}:{next_port}")
 
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.connect((next_ip, next_port))
@@ -119,8 +127,7 @@ def handle_message(conn, addr):
 
     except Exception as e:
         print(f"[{ROUTER_ID}] Erreur traitement message : {e}")
-    finally:
-        conn.close()
+
 
 # =====================================================
 # SERVEUR DU ROUTEUR
