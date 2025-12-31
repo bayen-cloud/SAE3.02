@@ -1,7 +1,7 @@
 import socket
 import random
 
-MASTER_IP = "127.0.0.1"
+MASTER_IP = "192.168.109.129"
 MASTER_CLIENT_PORT = 6000
 
 def rsa_chiffrer(message, cle_publique):

@@ -12,10 +12,10 @@ ROUTER_ID = sys.argv[1]          # Exemple : R1
 LISTEN_PORT = int(sys.argv[2])  # Exemple : 1800
 
 HOST = "0.0.0.0"
-MASTER_IP = "127.0.0.1"
+MASTER_IP = "192.168.109.129"
 MASTER_PORT = 5000
 
-CLIENT_B_IP = "127.0.0.1"
+CLIENT_B_IP = "192.168.109.128"
 CLIENT_B_PORT = 7000
 
 # =====================================================
@@ -97,17 +97,22 @@ def handle_message(conn, addr):
         # CAS FINAL : ENVOI AU CLIENT
         # =========================
         if route == "FINAL":
-            dest_port_str, message_chiffre = payload.split("||", 1)
-            dest_port = int(dest_port_str)
+            # payload = "PORT||MESSAGE_CHIFFRÉ"
+            try:
+                dest_port_str, message_chiffre = payload.split("||", 1)
+                dest_port = int(dest_port_str)
+            except ValueError:
+                print(f"[{ROUTER_ID}] Payload FINAL invalide : {payload}")
+                return
 
             # Déchiffrement
             message = rsa_dechiffrer(message_chiffre, CLE_PRIVEE)
 
             print(f"[{ROUTER_ID}] Message final déchiffré : {message}")
-            print(f"[{ROUTER_ID}] Envoi vers client sur port {dest_port}")
+            print(f"[{ROUTER_ID}] Envoi vers client B {CLIENT_B_IP}:{dest_port}")
 
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.connect(("127.0.0.1", dest_port))
+            s.connect((CLIENT_B_IP, dest_port))
             s.send(message.encode())
             s.close()
             return

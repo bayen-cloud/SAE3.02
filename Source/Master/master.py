@@ -17,9 +17,9 @@ server_running = True
 def connect_bdd():
     return mariadb.connect(
         host="127.0.0.1",
-        port=3307,
-        user="root",
-        password="toto",
+        port=3306,
+        user="saeuser",
+        password="sae",
         database="sae302"
     )
 
@@ -161,3 +161,11 @@ def start_master(log_callback=None):
     Point d'entrée utilisé par l'interface graphique
     """
     start_master_server(log_callback)
+    
+if __name__ == "__main__":
+    print("[MASTER] Démarrage du master (mode serveur)...")
+    start_master()
+    
+    # Empêche le programme de se fermer
+    while True:
+        time.sleep(1)
